@@ -155,7 +155,8 @@
     </div>
 
     <script>
-        const API_URL = 'http://localhost:3001';
+        // Auto-detect API URL (works for both local and deployed)
+        const API_URL = window.location.origin;
 
         function showLoading(elementId) {
             const el = document.getElementById(elementId);

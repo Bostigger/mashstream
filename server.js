@@ -1,11 +1,15 @@
 const express = require('express');
 const Mux = require('@mux/mux-node');
 const cors = require('cors');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Serve static files (HTML pages)
+app.use(express.static(path.join(__dirname)));
 
 const mux = new Mux({
   tokenId: process.env.MUX_TOKEN_ID,
@@ -72,6 +76,67 @@ app.delete('/api/stream/:streamId', async (req, res) => {
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Tournament streaming backend is running' });
+});
+
+// Root endpoint
+app.get('/', (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>🏆 Tournament Streaming Backend</title>
+      <style>
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+          color: white;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 100vh;
+          margin: 0;
+          padding: 20px;
+        }
+        .container {
+          max-width: 600px;
+          text-align: center;
+        }
+        h1 { font-size: 2.5rem; margin-bottom: 1rem; }
+        .links {
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+          margin-top: 2rem;
+        }
+        a {
+          background: linear-gradient(45deg, #667eea 0%, #764ba2 100%);
+          color: white;
+          padding: 1rem 2rem;
+          border-radius: 8px;
+          text-decoration: none;
+          font-weight: 600;
+          transition: transform 0.2s;
+        }
+        a:hover { transform: translateY(-2px); }
+        .status { color: #10b981; margin-top: 1rem; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>🏆 Tournament Streaming Backend</h1>
+        <p class="status">✅ Backend is running!</p>
+        <div class="links">
+          <a href="/test.html">🎥 Stream Manager (Create Streams)</a>
+          <a href="/watch.html">📺 Watch Stream Example</a>
+          <a href="/health">🏥 Health Check API</a>
+        </div>
+        <p style="margin-top: 2rem; color: #6b7280; font-size: 0.9rem;">
+          API Endpoints: /api/create-stream, /api/streams, /api/stream/:id
+        </p>
+      </div>
+    </body>
+    </html>
+  `);
 });
 
 const PORT = process.env.PORT || 3001;
