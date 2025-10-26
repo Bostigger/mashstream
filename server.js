@@ -1,5 +1,6 @@
 const express = require('express');
 const Mux = require('@mux/mux-node');
+const { StreamChat } = require('stream-chat');
 const cors = require('cors');
 const path = require('path');
 require('dotenv').config();
@@ -15,6 +16,15 @@ const mux = new Mux({
   tokenId: process.env.MUX_TOKEN_ID,
   tokenSecret: process.env.MUX_TOKEN_SECRET,
 });
+
+// Initialize Stream Chat (for chat token generation)
+let streamChatClient = null;
+if (process.env.STREAM_API_KEY && process.env.STREAM_API_SECRET) {
+  streamChatClient = StreamChat.getInstance(
+    process.env.STREAM_API_KEY,
+    process.env.STREAM_API_SECRET
+  );
+}
 
 // Create new stream
 app.post('/api/create-stream', async (req, res) => {
@@ -76,6 +86,34 @@ app.delete('/api/stream/:streamId', async (req, res) => {
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Tournament streaming backend is running' });
+});
+
+// Generate Stream Chat token
+app.post('/api/chat-token', async (req, res) => {
+  try {
+    const { userId, username } = req.body;
+
+    if (!userId || !username) {
+      return res.status(400).json({ error: 'userId and username are required' });
+    }
+
+    if (!streamChatClient) {
+      return res.status(500).json({ 
+        error: 'Stream Chat not configured. Add STREAM_API_KEY and STREAM_API_SECRET to .env' 
+      });
+    }
+
+    // Generate token for the user
+    const token = streamChatClient.createToken(userId);
+
+    res.json({ 
+      token,
+      apiKey: process.env.STREAM_API_KEY 
+    });
+  } catch (error) {
+    console.error('Error generating chat token:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // Root endpoint
@@ -143,4 +181,5 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
   console.log(`📡 API endpoints available at http://localhost:${PORT}/api`);
+
 });

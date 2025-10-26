@@ -7,7 +7,12 @@
     "dev": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["streaming", "mux", "tournament", "live-stream"],
+  "keywords": [
+    "streaming",
+    "mux",
+    "tournament",
+    "live-stream"
+  ],
   "author": "",
   "license": "ISC",
   "description": "Tournament streaming backend using Mux for OBS-based live streaming",
@@ -15,6 +20,7 @@
     "@mux/mux-node": "^12.8.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "stream-chat": "^9.25.0"
   }
 }
