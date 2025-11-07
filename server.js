@@ -88,10 +88,11 @@ app.get('/api/stream/:playbackId/viewers', async (req, res) => {
   try {
     const { playbackId } = req.params;
     
-    // Use Mux REST API directly for real-time metrics
+    // Use Mux REST API for real-time viewer data
     const auth = Buffer.from(`${process.env.MUX_TOKEN_ID}:${process.env.MUX_TOKEN_SECRET}`).toString('base64');
     
-    const url = `https://api.mux.com/data/v1/metrics/current-concurrent-viewers?filters[]=playback_id:${playbackId}`;
+    // Try the real-time breakdown endpoint
+    const url = `https://api.mux.com/data/v1/realtime/breakdown?dimension=asn&timestamp=now&filters[]=playback_id:${playbackId}&measurement=current-concurrent-viewers`;
     console.log('Fetching viewer count from:', url);
     
     const response = await fetch(url, {
@@ -108,13 +109,24 @@ app.get('/api/stream/:playbackId/viewers', async (req, res) => {
     
     // Check if response was successful
     if (!response.ok) {
-      throw new Error(`Mux API error: ${response.status} - ${JSON.stringify(data)}`);
+      console.error('Mux API error:', data);
+      // Return 0 viewers instead of error if stream doesn't have data yet
+      return res.json({
+        playbackId,
+        currentViewers: 0,
+        timestamp: new Date().toISOString(),
+        note: 'No viewer data available - stream may be offline or has no viewers',
+      });
     }
     
-    // Extract viewer count from response
-    const viewerCount = data.data && data.data.length > 0 
-      ? data.data[0].value || 0 
-      : 0;
+    // Extract viewer count from response - sum up all values or use total_row_count
+    let viewerCount = 0;
+    if (data.total_row_count !== undefined) {
+      viewerCount = data.total_row_count;
+    } else if (data.data && data.data.length > 0) {
+      // Sum up all concurrent viewers across dimensions
+      viewerCount = data.data.reduce((sum, item) => sum + (item.value || 0), 0);
+    }
 
     res.json({
       playbackId,
