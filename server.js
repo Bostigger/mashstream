@@ -89,8 +89,7 @@ app.get('/api/stream/:playbackId/viewers', async (req, res) => {
     const { playbackId } = req.params;
     
     // Get current viewers from Mux Data API
-    const response = await mux.data.metrics.breakdown({
-      metric_id: 'current-concurrent-viewers',
+    const response = await mux.Data.Metrics.breakdown('current-concurrent-viewers', {
       filters: [`playback_id:${playbackId}`],
       timeframe: ['now'],
     });
