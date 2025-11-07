@@ -91,17 +91,25 @@ app.get('/api/stream/:playbackId/viewers', async (req, res) => {
     // Use Mux REST API directly for real-time metrics
     const auth = Buffer.from(`${process.env.MUX_TOKEN_ID}:${process.env.MUX_TOKEN_SECRET}`).toString('base64');
     
-    const response = await fetch(
-      `https://api.mux.com/data/v1/metrics/current-concurrent-viewers?filters[]=playback_id:${playbackId}`,
-      {
-        headers: {
-          'Authorization': `Basic ${auth}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
+    const url = `https://api.mux.com/data/v1/metrics/current-concurrent-viewers?filters[]=playback_id:${playbackId}`;
+    console.log('Fetching viewer count from:', url);
+    
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Basic ${auth}`,
+        'Content-Type': 'application/json',
+      },
+    });
 
+    console.log('Mux API response status:', response.status);
+    
     const data = await response.json();
+    console.log('Mux API response data:', JSON.stringify(data, null, 2));
+    
+    // Check if response was successful
+    if (!response.ok) {
+      throw new Error(`Mux API error: ${response.status} - ${JSON.stringify(data)}`);
+    }
     
     // Extract viewer count from response
     const viewerCount = data.data && data.data.length > 0 
@@ -115,8 +123,10 @@ app.get('/api/stream/:playbackId/viewers', async (req, res) => {
     });
   } catch (error) {
     console.error('Error getting viewer count:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({ 
       error: error.message,
+      errorDetails: error.stack,
       playbackId: req.params.playbackId,
       currentViewers: 0,
     });
