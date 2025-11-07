@@ -3,6 +3,7 @@ const Mux = require('@mux/mux-node');
 const { StreamChat } = require('stream-chat');
 const cors = require('cors');
 const path = require('path');
+const https = require('https');
 require('dotenv').config();
 
 const app = express();
@@ -91,25 +92,51 @@ app.get('/api/stream/:playbackId/viewers', async (req, res) => {
     // Use Mux REST API for real-time viewer data
     const auth = Buffer.from(`${process.env.MUX_TOKEN_ID}:${process.env.MUX_TOKEN_SECRET}`).toString('base64');
     
-    // Try the real-time breakdown endpoint
-    const url = `https://api.mux.com/data/v1/realtime/breakdown?dimension=asn&timestamp=now&filters[]=playback_id:${playbackId}&measurement=current-concurrent-viewers`;
+    // Build the URL with proper encoding
+    const params = new URLSearchParams({
+      dimension: 'asn',
+      timestamp: 'now',
+      'filters[]': `playback_id:${playbackId}`,
+      measurement: 'current-concurrent-viewers'
+    });
+    
+    const url = `https://api.mux.com/data/v1/realtime/breakdown?${params.toString()}`;
     console.log('Fetching viewer count from:', url);
     
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Basic ${auth}`,
-        'Content-Type': 'application/json',
-      },
+    // Make request using https module
+    const data = await new Promise((resolve, reject) => {
+      const options = {
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Content-Type': 'application/json',
+        },
+      };
+      
+      https.get(url, options, (response) => {
+        let body = '';
+        
+        response.on('data', (chunk) => {
+          body += chunk;
+        });
+        
+        response.on('end', () => {
+          try {
+            console.log('Mux API response status:', response.statusCode);
+            const jsonData = JSON.parse(body);
+            console.log('Mux API response data:', JSON.stringify(jsonData, null, 2));
+            resolve({ statusCode: response.statusCode, data: jsonData });
+          } catch (error) {
+            reject(error);
+          }
+        });
+      }).on('error', (error) => {
+        reject(error);
+      });
     });
-
-    console.log('Mux API response status:', response.status);
-    
-    const data = await response.json();
-    console.log('Mux API response data:', JSON.stringify(data, null, 2));
     
     // Check if response was successful
-    if (!response.ok) {
-      console.error('Mux API error:', data);
+    if (data.statusCode !== 200) {
+      console.error('Mux API error:', data.data);
       // Return 0 viewers instead of error if stream doesn't have data yet
       return res.json({
         playbackId,
@@ -121,11 +148,11 @@ app.get('/api/stream/:playbackId/viewers', async (req, res) => {
     
     // Extract viewer count from response - sum up all values or use total_row_count
     let viewerCount = 0;
-    if (data.total_row_count !== undefined) {
-      viewerCount = data.total_row_count;
-    } else if (data.data && data.data.length > 0) {
+    if (data.data.total_row_count !== undefined) {
+      viewerCount = data.data.total_row_count;
+    } else if (data.data.data && data.data.data.length > 0) {
       // Sum up all concurrent viewers across dimensions
-      viewerCount = data.data.reduce((sum, item) => sum + (item.value || 0), 0);
+      viewerCount = data.data.data.reduce((sum, item) => sum + (item.value || 0), 0);
     }
 
     res.json({
