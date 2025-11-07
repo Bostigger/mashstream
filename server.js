@@ -172,6 +172,101 @@ app.get('/api/stream/:playbackId/viewers', async (req, res) => {
   }
 });
 
+// Get historical analytics for a stream
+app.get('/api/stream/:playbackId/analytics', async (req, res) => {
+  try {
+    const { playbackId } = req.params;
+    const { timeframe = '7:days' } = req.query; // Default to last 7 days
+    
+    const auth = Buffer.from(`${process.env.MUX_TOKEN_ID}:${process.env.MUX_TOKEN_SECRET}`).toString('base64');
+    
+    // Get video views analytics
+    const params = new URLSearchParams({
+      'filters[]': `playback_id:${playbackId}`,
+      timeframe: timeframe,
+      measurement: 'video_startup_time'
+    });
+    
+    const url = `https://api.mux.com/data/v1/metrics/aggregate?${params.toString()}`;
+    console.log('Fetching analytics from:', url);
+    
+    const data = await new Promise((resolve, reject) => {
+      https.get(url, {
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Content-Type': 'application/json',
+        },
+      }, (response) => {
+        let body = '';
+        response.on('data', (chunk) => { body += chunk; });
+        response.on('end', () => {
+          try {
+            const jsonData = JSON.parse(body);
+            resolve({ statusCode: response.statusCode, data: jsonData });
+          } catch (error) {
+            reject(error);
+          }
+        });
+      }).on('error', reject);
+    });
+    
+    if (data.statusCode !== 200) {
+      return res.json({
+        playbackId,
+        totalViews: 0,
+        totalWatchTime: 0,
+        note: 'No analytics data available for this stream',
+      });
+    }
+    
+    // Get view count
+    const viewCountParams = new URLSearchParams({
+      'filters[]': `playback_id:${playbackId}`,
+      timeframe: timeframe
+    });
+    
+    const viewUrl = `https://api.mux.com/data/v1/metrics/views?${viewCountParams.toString()}`;
+    
+    const viewData = await new Promise((resolve, reject) => {
+      https.get(viewUrl, {
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Content-Type': 'application/json',
+        },
+      }, (response) => {
+        let body = '';
+        response.on('data', (chunk) => { body += chunk; });
+        response.on('end', () => {
+          try {
+            const jsonData = JSON.parse(body);
+            resolve({ statusCode: response.statusCode, data: jsonData });
+          } catch (error) {
+            reject(error);
+          }
+        });
+      }).on('error', reject);
+    });
+    
+    const totalViews = viewData.data?.total_row_count || 0;
+    const totalWatchTime = viewData.data?.total_watch_time || 0;
+    
+    res.json({
+      playbackId,
+      timeframe,
+      totalViews,
+      totalWatchTime: Math.round(totalWatchTime / 60), // Convert to minutes
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error getting analytics:', error);
+    res.status(500).json({ 
+      error: error.message,
+      playbackId: req.params.playbackId,
+      totalViews: 0,
+    });
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Tournament streaming backend is running' });
@@ -258,7 +353,7 @@ app.get('/', (req, res) => {
           <a href="/health">🏥 Health Check API</a>
         </div>
         <p style="margin-top: 2rem; color: #6b7280; font-size: 0.9rem;">
-          API Endpoints: /api/create-stream, /api/streams, /api/stream/:id, /api/stream/:playbackId/viewers
+          API Endpoints: /api/create-stream, /api/streams, /api/stream/:id, /api/stream/:playbackId/viewers, /api/stream/:playbackId/analytics
         </p>
       </div>
     </body>
