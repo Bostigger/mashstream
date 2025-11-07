@@ -83,6 +83,38 @@ app.delete('/api/stream/:streamId', async (req, res) => {
   }
 });
 
+// Get current viewer count for a stream
+app.get('/api/stream/:playbackId/viewers', async (req, res) => {
+  try {
+    const { playbackId } = req.params;
+    
+    // Get current viewers from Mux Data API
+    const response = await mux.data.metrics.breakdown({
+      metric_id: 'current-concurrent-viewers',
+      filters: [`playback_id:${playbackId}`],
+      timeframe: ['now'],
+    });
+
+    // Extract viewer count
+    const viewerCount = response.data && response.data.length > 0 
+      ? response.data[0].value || 0 
+      : 0;
+
+    res.json({
+      playbackId,
+      currentViewers: viewerCount,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error getting viewer count:', error);
+    res.status(500).json({ 
+      error: error.message,
+      playbackId: req.params.playbackId,
+      currentViewers: 0,
+    });
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Tournament streaming backend is running' });
@@ -169,7 +201,7 @@ app.get('/', (req, res) => {
           <a href="/health">🏥 Health Check API</a>
         </div>
         <p style="margin-top: 2rem; color: #6b7280; font-size: 0.9rem;">
-          API Endpoints: /api/create-stream, /api/streams, /api/stream/:id
+          API Endpoints: /api/create-stream, /api/streams, /api/stream/:id, /api/stream/:playbackId/viewers
         </p>
       </div>
     </body>
