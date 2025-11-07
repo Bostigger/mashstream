@@ -88,15 +88,24 @@ app.get('/api/stream/:playbackId/viewers', async (req, res) => {
   try {
     const { playbackId } = req.params;
     
-    // Get current viewers from Mux Data API
-    const response = await mux.Data.Metrics.breakdown('current-concurrent-viewers', {
-      filters: [`playback_id:${playbackId}`],
-      timeframe: ['now'],
-    });
+    // Use Mux REST API directly for real-time metrics
+    const auth = Buffer.from(`${process.env.MUX_TOKEN_ID}:${process.env.MUX_TOKEN_SECRET}`).toString('base64');
+    
+    const response = await fetch(
+      `https://api.mux.com/data/v1/metrics/current-concurrent-viewers?filters[]=playback_id:${playbackId}`,
+      {
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
 
-    // Extract viewer count
-    const viewerCount = response.data && response.data.length > 0 
-      ? response.data[0].value || 0 
+    const data = await response.json();
+    
+    // Extract viewer count from response
+    const viewerCount = data.data && data.data.length > 0 
+      ? data.data[0].value || 0 
       : 0;
 
     res.json({
