@@ -62,6 +62,46 @@ app.get('/api/stream/:streamId', async (req, res) => {
   }
 });
 
+// Get saved video (asset) from a completed live stream
+app.get('/api/stream/:streamId/recording', async (req, res) => {
+  try {
+    const stream = await mux.video.liveStreams.retrieve(req.params.streamId);
+    
+    // Check if stream has created any assets (recordings)
+    if (!stream.recent_asset_ids || stream.recent_asset_ids.length === 0) {
+      return res.json({
+        streamId: req.params.streamId,
+        hasRecording: false,
+        message: 'No recording available. Stream may still be live or no recording was created.',
+      });
+    }
+    
+    // Get the most recent asset (recording)
+    const assetId = stream.recent_asset_ids[0];
+    const asset = await mux.video.assets.retrieve(assetId);
+    
+    // Get playback URL
+    const playbackId = asset.playback_ids && asset.playback_ids.length > 0 
+      ? asset.playback_ids[0].id 
+      : null;
+    
+    res.json({
+      streamId: req.params.streamId,
+      hasRecording: true,
+      assetId: asset.id,
+      playbackId: playbackId,
+      playbackUrl: playbackId ? `https://stream.mux.com/${playbackId}.m3u8` : null,
+      embedUrl: playbackId ? `https://stream.mux.com/${playbackId}` : null,
+      status: asset.status,
+      duration: asset.duration,
+      createdAt: asset.created_at,
+    });
+  } catch (error) {
+    console.error('Error retrieving recording:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // List all streams
 app.get('/api/streams', async (req, res) => {
   try {
@@ -317,7 +357,7 @@ app.get('/', (req, res) => {
           <a href="/health">🏥 Health Check API</a>
         </div>
         <p style="margin-top: 2rem; color: #6b7280; font-size: 0.9rem;">
-          API Endpoints: /api/create-stream, /api/streams, /api/stream/:id, /api/stream/:playbackId/viewers, /api/stream/:playbackId/analytics
+          API Endpoints: /api/create-stream, /api/streams, /api/stream/:id, /api/stream/:id/recording, /api/stream/:playbackId/viewers, /api/stream/:playbackId/analytics
         </p>
       </div>
     </body>
