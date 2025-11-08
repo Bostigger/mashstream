@@ -135,7 +135,7 @@ app.get('/api/stream/:streamId/recording', async (req, res) => {
   }
 });
 
-// Get recording by playback ID (convenience endpoint)
+// Get all recordings by playback ID (convenience endpoint)
 app.get('/api/playback/:playbackId/recording', async (req, res) => {
   try {
     const { playbackId } = req.params;
@@ -158,34 +158,49 @@ app.get('/api/playback/:playbackId/recording', async (req, res) => {
       return res.json({
         playbackId: playbackId,
         streamId: matchingStream.id,
-        hasRecording: false,
+        hasRecordings: false,
+        recordings: [],
         message: 'No recording available. Stream may still be live or no recording was created.',
       });
     }
     
-    // Get the most recent asset (recording)
-    const assetId = matchingStream.recent_asset_ids[0];
-    const asset = await mux.video.assets.retrieve(assetId);
+    // Get all assets (recordings)
+    const recordings = await Promise.all(
+      matchingStream.recent_asset_ids.map(async (assetId) => {
+        try {
+          const asset = await mux.video.assets.retrieve(assetId);
+          const assetPlaybackId = asset.playback_ids && asset.playback_ids.length > 0 
+            ? asset.playback_ids[0].id 
+            : null;
+          
+          return {
+            assetId: asset.id,
+            playbackId: assetPlaybackId,
+            playbackUrl: assetPlaybackId ? `https://stream.mux.com/${assetPlaybackId}.m3u8` : null,
+            embedUrl: assetPlaybackId ? `https://stream.mux.com/${assetPlaybackId}` : null,
+            status: asset.status,
+            duration: asset.duration,
+            createdAt: asset.created_at,
+          };
+        } catch (error) {
+          console.error(`Error retrieving asset ${assetId}:`, error);
+          return null;
+        }
+      })
+    );
     
-    // Get asset playback ID (different from stream playback ID)
-    const assetPlaybackId = asset.playback_ids && asset.playback_ids.length > 0 
-      ? asset.playback_ids[0].id 
-      : null;
+    // Filter out any failed retrievals
+    const validRecordings = recordings.filter(r => r !== null);
     
     res.json({
       streamId: matchingStream.id,
       streamPlaybackId: playbackId,
-      hasRecording: true,
-      assetId: asset.id,
-      recordingPlaybackId: assetPlaybackId,
-      playbackUrl: assetPlaybackId ? `https://stream.mux.com/${assetPlaybackId}.m3u8` : null,
-      embedUrl: assetPlaybackId ? `https://stream.mux.com/${assetPlaybackId}` : null,
-      status: asset.status,
-      duration: asset.duration,
-      createdAt: asset.created_at,
+      hasRecordings: validRecordings.length > 0,
+      totalRecordings: validRecordings.length,
+      recordings: validRecordings,
     });
   } catch (error) {
-    console.error('Error retrieving recording:', error);
+    console.error('Error retrieving recordings:', error);
     res.status(500).json({ error: error.message });
   }
 });
