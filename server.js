@@ -62,6 +62,39 @@ app.get('/api/stream/:streamId', async (req, res) => {
   }
 });
 
+// Find stream ID by playback ID
+app.get('/api/playback/:playbackId/stream', async (req, res) => {
+  try {
+    const { playbackId } = req.params;
+    
+    // List all streams and find the one with matching playback ID
+    const streams = await mux.video.liveStreams.list({ limit: 100 });
+    
+    const matchingStream = streams.data.find(stream => 
+      stream.playback_ids && stream.playback_ids.some(pb => pb.id === playbackId)
+    );
+    
+    if (!matchingStream) {
+      return res.status(404).json({
+        error: 'Stream not found',
+        playbackId: playbackId,
+        message: 'No stream found with this playback ID',
+      });
+    }
+    
+    res.json({
+      streamId: matchingStream.id,
+      playbackId: playbackId,
+      status: matchingStream.status,
+      streamKey: matchingStream.stream_key,
+      createdAt: matchingStream.created_at,
+    });
+  } catch (error) {
+    console.error('Error finding stream:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get saved video (asset) from a completed live stream
 app.get('/api/stream/:streamId/recording', async (req, res) => {
   try {
@@ -92,6 +125,61 @@ app.get('/api/stream/:streamId/recording', async (req, res) => {
       playbackId: playbackId,
       playbackUrl: playbackId ? `https://stream.mux.com/${playbackId}.m3u8` : null,
       embedUrl: playbackId ? `https://stream.mux.com/${playbackId}` : null,
+      status: asset.status,
+      duration: asset.duration,
+      createdAt: asset.created_at,
+    });
+  } catch (error) {
+    console.error('Error retrieving recording:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get recording by playback ID (convenience endpoint)
+app.get('/api/playback/:playbackId/recording', async (req, res) => {
+  try {
+    const { playbackId } = req.params;
+    
+    // Find the stream with this playback ID
+    const streams = await mux.video.liveStreams.list({ limit: 100 });
+    const matchingStream = streams.data.find(stream => 
+      stream.playback_ids && stream.playback_ids.some(pb => pb.id === playbackId)
+    );
+    
+    if (!matchingStream) {
+      return res.status(404).json({
+        error: 'Stream not found',
+        playbackId: playbackId,
+      });
+    }
+    
+    // Check if stream has created any assets (recordings)
+    if (!matchingStream.recent_asset_ids || matchingStream.recent_asset_ids.length === 0) {
+      return res.json({
+        playbackId: playbackId,
+        streamId: matchingStream.id,
+        hasRecording: false,
+        message: 'No recording available. Stream may still be live or no recording was created.',
+      });
+    }
+    
+    // Get the most recent asset (recording)
+    const assetId = matchingStream.recent_asset_ids[0];
+    const asset = await mux.video.assets.retrieve(assetId);
+    
+    // Get asset playback ID (different from stream playback ID)
+    const assetPlaybackId = asset.playback_ids && asset.playback_ids.length > 0 
+      ? asset.playback_ids[0].id 
+      : null;
+    
+    res.json({
+      streamId: matchingStream.id,
+      streamPlaybackId: playbackId,
+      hasRecording: true,
+      assetId: asset.id,
+      recordingPlaybackId: assetPlaybackId,
+      playbackUrl: assetPlaybackId ? `https://stream.mux.com/${assetPlaybackId}.m3u8` : null,
+      embedUrl: assetPlaybackId ? `https://stream.mux.com/${assetPlaybackId}` : null,
       status: asset.status,
       duration: asset.duration,
       createdAt: asset.created_at,
