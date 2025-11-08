@@ -159,19 +159,22 @@ app.get('/api/playback/:playbackId/recording', async (req, res) => {
       return res.json({
         playbackId: playbackId,
         streamId: matchingStream.id,
+        createdAt: matchingStream.created_at,
         hasRecordings: false,
         totalAssets: 0,
+        totalViews: 0,
         recordings: [],
         message: 'No recording available. Stream may still be live or no recording was created.',
       });
     }
     
     const totalAssets = matchingStream.recent_asset_ids.length;
+    const auth = Buffer.from(`${process.env.MUX_TOKEN_ID}:${process.env.MUX_TOKEN_SECRET}`).toString('base64');
     
     // Limit the number of assets to retrieve to avoid timeout
     const assetIdsToRetrieve = matchingStream.recent_asset_ids.slice(0, Math.min(parseInt(limit), 10));
     
-    // Get assets (recordings) with timeout protection
+    // Get assets (recordings) with analytics data
     const recordings = await Promise.all(
       assetIdsToRetrieve.map(async (assetId) => {
         try {
@@ -179,6 +182,45 @@ app.get('/api/playback/:playbackId/recording', async (req, res) => {
           const assetPlaybackId = asset.playback_ids && asset.playback_ids.length > 0 
             ? asset.playback_ids[0].id 
             : null;
+          
+          // Get view count for this recording
+          let viewCount = 0;
+          if (assetPlaybackId) {
+            try {
+              const params = new URLSearchParams({
+                'filters[]': `playback_id:${assetPlaybackId}`,
+                'timeframe[]': '30:days'
+              });
+              
+              const url = `https://api.mux.com/data/v1/video-views?${params.toString()}`;
+              
+              const analyticsData = await new Promise((resolve, reject) => {
+                https.get(url, {
+                  headers: {
+                    'Authorization': `Basic ${auth}`,
+                    'Content-Type': 'application/json',
+                  },
+                }, (response) => {
+                  let body = '';
+                  response.on('data', (chunk) => { body += chunk; });
+                  response.on('end', () => {
+                    try {
+                      const jsonData = JSON.parse(body);
+                      resolve({ statusCode: response.statusCode, data: jsonData });
+                    } catch (error) {
+                      resolve({ statusCode: 500, data: null });
+                    }
+                  });
+                }).on('error', () => resolve({ statusCode: 500, data: null }));
+              });
+              
+              if (analyticsData.statusCode === 200 && analyticsData.data) {
+                viewCount = analyticsData.data.total_row_count || 0;
+              }
+            } catch (error) {
+              console.error(`Error fetching analytics for ${assetPlaybackId}:`, error);
+            }
+          }
           
           return {
             assetId: asset.id,
@@ -188,6 +230,7 @@ app.get('/api/playback/:playbackId/recording', async (req, res) => {
             status: asset.status,
             duration: asset.duration,
             createdAt: asset.created_at,
+            totalViews: viewCount,
           };
         } catch (error) {
           console.error(`Error retrieving asset ${assetId}:`, error);
@@ -199,12 +242,17 @@ app.get('/api/playback/:playbackId/recording', async (req, res) => {
     // Filter out any failed retrievals
     const validRecordings = recordings.filter(r => r !== null);
     
+    // Calculate total views across all recordings
+    const totalViews = validRecordings.reduce((sum, rec) => sum + (rec.totalViews || 0), 0);
+    
     res.json({
       streamId: matchingStream.id,
       streamPlaybackId: playbackId,
+      createdAt: matchingStream.created_at,
       hasRecordings: validRecordings.length > 0,
       totalAssets: totalAssets,
       returnedRecordings: validRecordings.length,
+      totalViews: totalViews,
       recordings: validRecordings,
       note: totalAssets > assetIdsToRetrieve.length ? `Showing ${assetIdsToRetrieve.length} of ${totalAssets} recordings. Use ?limit=N to get more.` : undefined,
     });
