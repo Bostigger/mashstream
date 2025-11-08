@@ -156,13 +156,53 @@ app.get('/api/playback/:playbackId/recording', async (req, res) => {
     
     // Check if stream has created any assets (recordings)
     if (!matchingStream.recent_asset_ids || matchingStream.recent_asset_ids.length === 0) {
+      // Still get live stream views even if no recordings
+      const auth = Buffer.from(`${process.env.MUX_TOKEN_ID}:${process.env.MUX_TOKEN_SECRET}`).toString('base64');
+      let liveStreamViews = 0;
+      try {
+        const params = new URLSearchParams({
+          'filters[]': `playback_id:${playbackId}`,
+          'timeframe[]': '30:days'
+        });
+        
+        const url = `https://api.mux.com/data/v1/video-views?${params.toString()}`;
+        
+        const liveStreamData = await new Promise((resolve, reject) => {
+          https.get(url, {
+            headers: {
+              'Authorization': `Basic ${auth}`,
+              'Content-Type': 'application/json',
+            },
+          }, (response) => {
+            let body = '';
+            response.on('data', (chunk) => { body += chunk; });
+            response.on('end', () => {
+              try {
+                const jsonData = JSON.parse(body);
+                resolve({ statusCode: response.statusCode, data: jsonData });
+              } catch (error) {
+                resolve({ statusCode: 500, data: null });
+              }
+            });
+          }).on('error', () => resolve({ statusCode: 500, data: null }));
+        });
+        
+        if (liveStreamData.statusCode === 200 && liveStreamData.data) {
+          liveStreamViews = liveStreamData.data.total_row_count || 0;
+        }
+      } catch (error) {
+        console.error(`Error fetching live stream analytics:`, error);
+      }
+      
       return res.json({
         playbackId: playbackId,
         streamId: matchingStream.id,
         createdAt: matchingStream.created_at,
         hasRecordings: false,
         totalAssets: 0,
-        totalViews: 0,
+        liveStreamViews: liveStreamViews,
+        recordingViews: 0,
+        totalViews: liveStreamViews,
         recordings: [],
         message: 'No recording available. Stream may still be live or no recording was created.',
       });
@@ -170,6 +210,43 @@ app.get('/api/playback/:playbackId/recording', async (req, res) => {
     
     const totalAssets = matchingStream.recent_asset_ids.length;
     const auth = Buffer.from(`${process.env.MUX_TOKEN_ID}:${process.env.MUX_TOKEN_SECRET}`).toString('base64');
+    
+    // Get views for the LIVE STREAM (this is where most views come from)
+    let liveStreamViews = 0;
+    try {
+      const params = new URLSearchParams({
+        'filters[]': `playback_id:${playbackId}`,
+        'timeframe[]': '30:days'
+      });
+      
+      const url = `https://api.mux.com/data/v1/video-views?${params.toString()}`;
+      
+      const liveStreamData = await new Promise((resolve, reject) => {
+        https.get(url, {
+          headers: {
+            'Authorization': `Basic ${auth}`,
+            'Content-Type': 'application/json',
+          },
+        }, (response) => {
+          let body = '';
+          response.on('data', (chunk) => { body += chunk; });
+          response.on('end', () => {
+            try {
+              const jsonData = JSON.parse(body);
+              resolve({ statusCode: response.statusCode, data: jsonData });
+            } catch (error) {
+              resolve({ statusCode: 500, data: null });
+            }
+          });
+        }).on('error', () => resolve({ statusCode: 500, data: null }));
+      });
+      
+      if (liveStreamData.statusCode === 200 && liveStreamData.data) {
+        liveStreamViews = liveStreamData.data.total_row_count || 0;
+      }
+    } catch (error) {
+      console.error(`Error fetching live stream analytics:`, error);
+    }
     
     // Limit the number of assets to retrieve to avoid timeout
     const assetIdsToRetrieve = matchingStream.recent_asset_ids.slice(0, Math.min(parseInt(limit), 10));
@@ -183,7 +260,7 @@ app.get('/api/playback/:playbackId/recording', async (req, res) => {
             ? asset.playback_ids[0].id 
             : null;
           
-          // Get view count for this recording
+          // Get view count for this recording (on-demand views after stream ended)
           let viewCount = 0;
           if (assetPlaybackId) {
             try {
@@ -230,7 +307,7 @@ app.get('/api/playback/:playbackId/recording', async (req, res) => {
             status: asset.status,
             duration: asset.duration,
             createdAt: asset.created_at,
-            totalViews: viewCount,
+            recordingViews: viewCount,
           };
         } catch (error) {
           console.error(`Error retrieving asset ${assetId}:`, error);
@@ -242,8 +319,9 @@ app.get('/api/playback/:playbackId/recording', async (req, res) => {
     // Filter out any failed retrievals
     const validRecordings = recordings.filter(r => r !== null);
     
-    // Calculate total views across all recordings
-    const totalViews = validRecordings.reduce((sum, rec) => sum + (rec.totalViews || 0), 0);
+    // Calculate total views: live stream views + all recording views
+    const recordingViews = validRecordings.reduce((sum, rec) => sum + (rec.recordingViews || 0), 0);
+    const totalViews = liveStreamViews + recordingViews;
     
     res.json({
       streamId: matchingStream.id,
@@ -252,6 +330,8 @@ app.get('/api/playback/:playbackId/recording', async (req, res) => {
       hasRecordings: validRecordings.length > 0,
       totalAssets: totalAssets,
       returnedRecordings: validRecordings.length,
+      liveStreamViews: liveStreamViews,
+      recordingViews: recordingViews,
       totalViews: totalViews,
       recordings: validRecordings,
       note: totalAssets > assetIdsToRetrieve.length ? `Showing ${assetIdsToRetrieve.length} of ${totalAssets} recordings. Use ?limit=N to get more.` : undefined,
