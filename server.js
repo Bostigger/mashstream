@@ -84,41 +84,30 @@ app.delete('/api/stream/:streamId', async (req, res) => {
   }
 });
 
-// Get current viewer count for a stream
+// Get current viewer count for a stream (real-time monitoring)
 app.get('/api/stream/:playbackId/viewers', async (req, res) => {
   try {
     const { playbackId } = req.params;
     
-    // Use Mux REST API for real-time viewer data
     const auth = Buffer.from(`${process.env.MUX_TOKEN_ID}:${process.env.MUX_TOKEN_SECRET}`).toString('base64');
     
-    // Build the URL with proper encoding
+    // Use Mux Monitoring API for real-time current-concurrent-viewers
     const params = new URLSearchParams({
-      dimension: 'asn',
-      timestamp: 'now',
-      'filters[]': `playback_id:${playbackId}`,
-      measurement: 'current-concurrent-viewers'
+      'filters[]': `playback_id:${playbackId}`
     });
     
-    const url = `https://api.mux.com/data/v1/realtime/breakdown?${params.toString()}`;
+    const url = `https://api.mux.com/data/v1/monitoring/metrics/current-concurrent-viewers/breakdown?${params.toString()}`;
     console.log('Fetching viewer count from:', url);
     
-    // Make request using https module
     const data = await new Promise((resolve, reject) => {
-      const options = {
+      https.get(url, {
         headers: {
           'Authorization': `Basic ${auth}`,
           'Content-Type': 'application/json',
         },
-      };
-      
-      https.get(url, options, (response) => {
+      }, (response) => {
         let body = '';
-        
-        response.on('data', (chunk) => {
-          body += chunk;
-        });
-        
+        response.on('data', (chunk) => { body += chunk; });
         response.on('end', () => {
           try {
             console.log('Mux API response status:', response.statusCode);
@@ -129,15 +118,10 @@ app.get('/api/stream/:playbackId/viewers', async (req, res) => {
             reject(error);
           }
         });
-      }).on('error', (error) => {
-        reject(error);
-      });
+      }).on('error', reject);
     });
     
-    // Check if response was successful
     if (data.statusCode !== 200) {
-      console.error('Mux API error:', data.data);
-      // Return 0 viewers instead of error if stream doesn't have data yet
       return res.json({
         playbackId,
         currentViewers: 0,
@@ -146,13 +130,10 @@ app.get('/api/stream/:playbackId/viewers', async (req, res) => {
       });
     }
     
-    // Extract viewer count from response - sum up all values or use total_row_count
+    // Sum concurrent viewers from breakdown
     let viewerCount = 0;
-    if (data.data.total_row_count !== undefined) {
-      viewerCount = data.data.total_row_count;
-    } else if (data.data.data && data.data.data.length > 0) {
-      // Sum up all concurrent viewers across dimensions
-      viewerCount = data.data.data.reduce((sum, item) => sum + (item.value || 0), 0);
+    if (data.data.data && Array.isArray(data.data.data)) {
+      viewerCount = data.data.data.reduce((sum, item) => sum + (item.concurrent_viewers || 0), 0);
     }
 
     res.json({
@@ -162,32 +143,29 @@ app.get('/api/stream/:playbackId/viewers', async (req, res) => {
     });
   } catch (error) {
     console.error('Error getting viewer count:', error);
-    console.error('Error stack:', error.stack);
     res.status(500).json({ 
       error: error.message,
-      errorDetails: error.stack,
       playbackId: req.params.playbackId,
       currentViewers: 0,
     });
   }
 });
 
-// Get historical analytics for a stream
+// Get historical analytics for a stream (video views)
 app.get('/api/stream/:playbackId/analytics', async (req, res) => {
   try {
     const { playbackId } = req.params;
-    const { timeframe = '7:days' } = req.query; // Default to last 7 days
+    const { timeframe = '7:days' } = req.query;
     
     const auth = Buffer.from(`${process.env.MUX_TOKEN_ID}:${process.env.MUX_TOKEN_SECRET}`).toString('base64');
     
-    // Get video views analytics
+    // Use Mux Video Views API for historical data
     const params = new URLSearchParams({
       'filters[]': `playback_id:${playbackId}`,
-      timeframe: timeframe,
-      measurement: 'video_startup_time'
+      'timeframe[]': timeframe
     });
     
-    const url = `https://api.mux.com/data/v1/metrics/aggregate?${params.toString()}`;
+    const url = `https://api.mux.com/data/v1/video-views?${params.toString()}`;
     console.log('Fetching analytics from:', url);
     
     const data = await new Promise((resolve, reject) => {
@@ -201,7 +179,9 @@ app.get('/api/stream/:playbackId/analytics', async (req, res) => {
         response.on('data', (chunk) => { body += chunk; });
         response.on('end', () => {
           try {
+            console.log('Mux API response status:', response.statusCode);
             const jsonData = JSON.parse(body);
+            console.log('Mux API analytics response:', JSON.stringify(jsonData, null, 2));
             resolve({ statusCode: response.statusCode, data: jsonData });
           } catch (error) {
             reject(error);
@@ -213,48 +193,32 @@ app.get('/api/stream/:playbackId/analytics', async (req, res) => {
     if (data.statusCode !== 200) {
       return res.json({
         playbackId,
+        timeframe,
         totalViews: 0,
         totalWatchTime: 0,
+        averageViewDuration: 0,
         note: 'No analytics data available for this stream',
       });
     }
     
-    // Get view count
-    const viewCountParams = new URLSearchParams({
-      'filters[]': `playback_id:${playbackId}`,
-      timeframe: timeframe
-    });
+    // Calculate totals from video views
+    const totalViews = data.data.total_row_count || 0;
+    let totalWatchTime = 0;
     
-    const viewUrl = `https://api.mux.com/data/v1/metrics/views?${viewCountParams.toString()}`;
+    if (data.data.data && Array.isArray(data.data.data)) {
+      totalWatchTime = data.data.data.reduce((sum, view) => {
+        return sum + (view.watch_time || 0);
+      }, 0);
+    }
     
-    const viewData = await new Promise((resolve, reject) => {
-      https.get(viewUrl, {
-        headers: {
-          'Authorization': `Basic ${auth}`,
-          'Content-Type': 'application/json',
-        },
-      }, (response) => {
-        let body = '';
-        response.on('data', (chunk) => { body += chunk; });
-        response.on('end', () => {
-          try {
-            const jsonData = JSON.parse(body);
-            resolve({ statusCode: response.statusCode, data: jsonData });
-          } catch (error) {
-            reject(error);
-          }
-        });
-      }).on('error', reject);
-    });
-    
-    const totalViews = viewData.data?.total_row_count || 0;
-    const totalWatchTime = viewData.data?.total_watch_time || 0;
+    const avgViewDuration = totalViews > 0 ? Math.round(totalWatchTime / totalViews / 1000) : 0;
     
     res.json({
       playbackId,
       timeframe,
       totalViews,
-      totalWatchTime: Math.round(totalWatchTime / 60), // Convert to minutes
+      totalWatchTime: Math.round(totalWatchTime / 1000), // Convert milliseconds to seconds
+      averageViewDuration: avgViewDuration, // Average seconds per view
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
