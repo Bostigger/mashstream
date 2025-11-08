@@ -139,6 +139,7 @@ app.get('/api/stream/:streamId/recording', async (req, res) => {
 app.get('/api/playback/:playbackId/recording', async (req, res) => {
   try {
     const { playbackId } = req.params;
+    const { limit = 10 } = req.query; // Limit number of assets to retrieve
     
     // Find the stream with this playback ID
     const streams = await mux.video.liveStreams.list({ limit: 100 });
@@ -159,14 +160,20 @@ app.get('/api/playback/:playbackId/recording', async (req, res) => {
         playbackId: playbackId,
         streamId: matchingStream.id,
         hasRecordings: false,
+        totalAssets: 0,
         recordings: [],
         message: 'No recording available. Stream may still be live or no recording was created.',
       });
     }
     
-    // Get all assets (recordings)
+    const totalAssets = matchingStream.recent_asset_ids.length;
+    
+    // Limit the number of assets to retrieve to avoid timeout
+    const assetIdsToRetrieve = matchingStream.recent_asset_ids.slice(0, Math.min(parseInt(limit), 10));
+    
+    // Get assets (recordings) with timeout protection
     const recordings = await Promise.all(
-      matchingStream.recent_asset_ids.map(async (assetId) => {
+      assetIdsToRetrieve.map(async (assetId) => {
         try {
           const asset = await mux.video.assets.retrieve(assetId);
           const assetPlaybackId = asset.playback_ids && asset.playback_ids.length > 0 
@@ -196,8 +203,10 @@ app.get('/api/playback/:playbackId/recording', async (req, res) => {
       streamId: matchingStream.id,
       streamPlaybackId: playbackId,
       hasRecordings: validRecordings.length > 0,
-      totalRecordings: validRecordings.length,
+      totalAssets: totalAssets,
+      returnedRecordings: validRecordings.length,
       recordings: validRecordings,
+      note: totalAssets > assetIdsToRetrieve.length ? `Showing ${assetIdsToRetrieve.length} of ${totalAssets} recordings. Use ?limit=N to get more.` : undefined,
     });
   } catch (error) {
     console.error('Error retrieving recordings:', error);
