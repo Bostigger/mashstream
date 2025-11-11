@@ -371,13 +371,13 @@ app.get('/api/stream-id/:streamId/viewers', async (req, res) => {
     
     const auth = Buffer.from(`${process.env.MUX_TOKEN_ID}:${process.env.MUX_TOKEN_SECRET}`).toString('base64');
     
-    // Use timeseries endpoint with current-concurrent-viewers metric
+    // Try legacy Real-Time API (may work on free/basic plans)
     const params = new URLSearchParams({
       'filters[]': `live_stream_id:${streamId}`
     });
     
-    const url = `https://api.mux.com/data/v1/monitoring/timeseries/current-concurrent-viewers?${params.toString()}`;
-    console.log('🔍 Fetching viewers by stream ID (timeseries):', url);
+    const url = `https://api.mux.com/data/v1/realtime/metrics/current-concurrent-viewers?${params.toString()}`;
+    console.log('🔍 Trying Real-Time API (legacy):', url);
     
     const data = await new Promise((resolve, reject) => {
       https.get(url, {
@@ -390,9 +390,9 @@ app.get('/api/stream-id/:streamId/viewers', async (req, res) => {
         response.on('data', (chunk) => { body += chunk; });
         response.on('end', () => {
           try {
-            console.log('📊 API status:', response.statusCode);
+            console.log('📊 Real-Time API status:', response.statusCode);
             const jsonData = JSON.parse(body);
-            console.log('📊 API data:', JSON.stringify(jsonData, null, 2));
+            console.log('📊 Real-Time API data:', JSON.stringify(jsonData, null, 2));
             resolve({ statusCode: response.statusCode, data: jsonData });
           } catch (error) {
             resolve({ statusCode: 500, data: null });
@@ -401,27 +401,24 @@ app.get('/api/stream-id/:streamId/viewers', async (req, res) => {
       }).on('error', () => resolve({ statusCode: 500, data: null }));
     });
     
-    if (data.statusCode === 200 && data.data && data.data.data) {
-      // Timeseries returns array of data points, get the latest
-      const dataPoints = data.data.data;
-      if (Array.isArray(dataPoints) && dataPoints.length > 0) {
-        const latest = dataPoints[dataPoints.length - 1];
-        const viewerCount = latest.concurrent_viewers || 0;
-        console.log('✅ Viewer count from timeseries:', viewerCount);
-        return res.json({
-          streamId,
-          currentViewers: viewerCount,
-          timestamp: latest.date || new Date().toISOString(),
-        });
-      }
+    if (data.statusCode === 200 && data.data) {
+      // Check for direct value or data array
+      const viewerCount = data.data.value || data.data.total_row_count || 0;
+      console.log('✅ Viewer count from Real-Time API:', viewerCount);
+      return res.json({
+        streamId,
+        currentViewers: viewerCount,
+        timestamp: new Date().toISOString(),
+        note: 'Real-time monitoring may require Mux Media plan. This is an estimate.',
+      });
     }
     
-    console.log('⚠️ No viewer data available');
+    console.log('⚠️ Real-time viewer data not available on your Mux plan');
     res.json({
       streamId,
       currentViewers: 0,
       timestamp: new Date().toISOString(),
-      note: 'No viewer data available - stream may be offline or has no viewers',
+      note: 'Real-time viewer count requires Mux Media plan or higher. Please upgrade your plan or contact Mux support.',
     });
   } catch (error) {
     console.error('❌ Error getting viewer count:', error);
@@ -429,6 +426,7 @@ app.get('/api/stream-id/:streamId/viewers', async (req, res) => {
       error: error.message,
       streamId: req.params.streamId,
       currentViewers: 0,
+      note: 'Real-time monitoring not available. May require plan upgrade.',
     });
   }
 });
