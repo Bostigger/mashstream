@@ -371,13 +371,13 @@ app.get('/api/stream-id/:streamId/viewers', async (req, res) => {
     
     const auth = Buffer.from(`${process.env.MUX_TOKEN_ID}:${process.env.MUX_TOKEN_SECRET}`).toString('base64');
     
-    // Use stream_id filter directly
+    // Use timeseries endpoint with current-concurrent-viewers metric
     const params = new URLSearchParams({
       'filters[]': `live_stream_id:${streamId}`
     });
     
-    const url = `https://api.mux.com/data/v1/monitoring/metrics/current-concurrent-viewers?${params.toString()}`;
-    console.log('🔍 Fetching viewers by stream ID:', url);
+    const url = `https://api.mux.com/data/v1/monitoring/timeseries/current-concurrent-viewers?${params.toString()}`;
+    console.log('🔍 Fetching viewers by stream ID (timeseries):', url);
     
     const data = await new Promise((resolve, reject) => {
       https.get(url, {
@@ -402,13 +402,18 @@ app.get('/api/stream-id/:streamId/viewers', async (req, res) => {
     });
     
     if (data.statusCode === 200 && data.data && data.data.data) {
-      const viewerCount = data.data.data.value || 0;
-      console.log('✅ Viewer count:', viewerCount);
-      return res.json({
-        streamId,
-        currentViewers: viewerCount,
-        timestamp: new Date().toISOString(),
-      });
+      // Timeseries returns array of data points, get the latest
+      const dataPoints = data.data.data;
+      if (Array.isArray(dataPoints) && dataPoints.length > 0) {
+        const latest = dataPoints[dataPoints.length - 1];
+        const viewerCount = latest.concurrent_viewers || 0;
+        console.log('✅ Viewer count from timeseries:', viewerCount);
+        return res.json({
+          streamId,
+          currentViewers: viewerCount,
+          timestamp: latest.date || new Date().toISOString(),
+        });
+      }
     }
     
     console.log('⚠️ No viewer data available');
