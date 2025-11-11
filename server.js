@@ -371,16 +371,75 @@ app.get('/api/stream/:playbackId/viewers', async (req, res) => {
     
     const auth = Buffer.from(`${process.env.MUX_TOKEN_ID}:${process.env.MUX_TOKEN_SECRET}`).toString('base64');
     
-    // Use Mux Monitoring API for real-time current-concurrent-viewers
-    const params = new URLSearchParams({
+    // First, try to find the stream ID from playback ID
+    let streamId = null;
+    try {
+      const streams = await mux.video.liveStreams.list({ limit: 100 });
+      const matchingStream = streams.data.find(stream => 
+        stream.playback_ids && stream.playback_ids.some(pb => pb.id === playbackId)
+      );
+      if (matchingStream) {
+        streamId = matchingStream.id;
+        console.log('🔍 Found stream ID:', streamId, 'for playback ID:', playbackId);
+      }
+    } catch (error) {
+      console.error('⚠️ Error finding stream ID:', error);
+    }
+    
+    // Try Method 1: Using stream_id filter (most reliable for live streams)
+    if (streamId) {
+      const streamIdParams = new URLSearchParams({
+        'filters[]': `live_stream_id:${streamId}`
+      });
+      
+      const streamIdUrl = `https://api.mux.com/data/v1/monitoring/metrics/current-concurrent-viewers?${streamIdParams.toString()}`;
+      console.log('🔍 Trying with stream_id:', streamIdUrl);
+      
+      const streamIdData = await new Promise((resolve, reject) => {
+        https.get(streamIdUrl, {
+          headers: {
+            'Authorization': `Basic ${auth}`,
+            'Content-Type': 'application/json',
+          },
+        }, (response) => {
+          let body = '';
+          response.on('data', (chunk) => { body += chunk; });
+          response.on('end', () => {
+            try {
+              console.log('📊 Stream ID API status:', response.statusCode);
+              const jsonData = JSON.parse(body);
+              console.log('📊 Stream ID API data:', JSON.stringify(jsonData, null, 2));
+              resolve({ statusCode: response.statusCode, data: jsonData });
+            } catch (error) {
+              resolve({ statusCode: 500, data: null });
+            }
+          });
+        }).on('error', () => resolve({ statusCode: 500, data: null }));
+      });
+      
+      if (streamIdData.statusCode === 200 && streamIdData.data && streamIdData.data.data) {
+        const viewerCount = streamIdData.data.data.value || 0;
+        console.log('✅ Got viewers from stream_id:', viewerCount);
+        return res.json({
+          playbackId,
+          streamId,
+          currentViewers: viewerCount,
+          timestamp: new Date().toISOString(),
+          method: 'stream_id',
+        });
+      }
+    }
+    
+    // Try Method 2: Using playback_id filter
+    const playbackParams = new URLSearchParams({
       'filters[]': `playback_id:${playbackId}`
     });
     
-    const url = `https://api.mux.com/data/v1/monitoring/metrics/current-concurrent-viewers/breakdown?${params.toString()}`;
-    console.log('Fetching viewer count from:', url);
+    const playbackUrl = `https://api.mux.com/data/v1/monitoring/metrics/current-concurrent-viewers?${playbackParams.toString()}`;
+    console.log('🔍 Trying with playback_id:', playbackUrl);
     
-    const data = await new Promise((resolve, reject) => {
-      https.get(url, {
+    const playbackData = await new Promise((resolve, reject) => {
+      https.get(playbackUrl, {
         headers: {
           'Authorization': `Basic ${auth}`,
           'Content-Type': 'application/json',
@@ -390,39 +449,40 @@ app.get('/api/stream/:playbackId/viewers', async (req, res) => {
         response.on('data', (chunk) => { body += chunk; });
         response.on('end', () => {
           try {
-            console.log('Mux API response status:', response.statusCode);
+            console.log('📊 Playback ID API status:', response.statusCode);
             const jsonData = JSON.parse(body);
-            console.log('Mux API response data:', JSON.stringify(jsonData, null, 2));
+            console.log('📊 Playback ID API data:', JSON.stringify(jsonData, null, 2));
             resolve({ statusCode: response.statusCode, data: jsonData });
           } catch (error) {
-            reject(error);
+            resolve({ statusCode: 500, data: null });
           }
         });
-      }).on('error', reject);
+      }).on('error', () => resolve({ statusCode: 500, data: null }));
     });
     
-    if (data.statusCode !== 200) {
+    if (playbackData.statusCode === 200 && playbackData.data && playbackData.data.data) {
+      const viewerCount = playbackData.data.data.value || 0;
+      console.log('✅ Got viewers from playback_id:', viewerCount);
       return res.json({
         playbackId,
-        currentViewers: 0,
+        streamId,
+        currentViewers: viewerCount,
         timestamp: new Date().toISOString(),
-        note: 'No viewer data available - stream may be offline or has no viewers',
+        method: 'playback_id',
       });
     }
     
-    // Sum concurrent viewers from breakdown
-    let viewerCount = 0;
-    if (data.data.data && Array.isArray(data.data.data)) {
-      viewerCount = data.data.data.reduce((sum, item) => sum + (item.concurrent_viewers || 0), 0);
-    }
-
+    // No data from either endpoint
+    console.log('⚠️ No viewer data from any endpoint');
     res.json({
       playbackId,
-      currentViewers: viewerCount,
+      streamId,
+      currentViewers: 0,
       timestamp: new Date().toISOString(),
+      note: 'No viewer data available - stream may be offline or has no viewers',
     });
   } catch (error) {
-    console.error('Error getting viewer count:', error);
+    console.error('❌ Error getting viewer count:', error);
     res.status(500).json({ 
       error: error.message,
       playbackId: req.params.playbackId,
