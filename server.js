@@ -364,6 +364,70 @@ app.delete('/api/stream/:streamId', async (req, res) => {
   }
 });
 
+// Get current viewer count by stream ID (for active streams)
+app.get('/api/stream-id/:streamId/viewers', async (req, res) => {
+  try {
+    const { streamId } = req.params;
+    
+    const auth = Buffer.from(`${process.env.MUX_TOKEN_ID}:${process.env.MUX_TOKEN_SECRET}`).toString('base64');
+    
+    // Use stream_id filter directly
+    const params = new URLSearchParams({
+      'filters[]': `live_stream_id:${streamId}`
+    });
+    
+    const url = `https://api.mux.com/data/v1/monitoring/metrics/current-concurrent-viewers?${params.toString()}`;
+    console.log('🔍 Fetching viewers by stream ID:', url);
+    
+    const data = await new Promise((resolve, reject) => {
+      https.get(url, {
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Content-Type': 'application/json',
+        },
+      }, (response) => {
+        let body = '';
+        response.on('data', (chunk) => { body += chunk; });
+        response.on('end', () => {
+          try {
+            console.log('📊 API status:', response.statusCode);
+            const jsonData = JSON.parse(body);
+            console.log('📊 API data:', JSON.stringify(jsonData, null, 2));
+            resolve({ statusCode: response.statusCode, data: jsonData });
+          } catch (error) {
+            resolve({ statusCode: 500, data: null });
+          }
+        });
+      }).on('error', () => resolve({ statusCode: 500, data: null }));
+    });
+    
+    if (data.statusCode === 200 && data.data && data.data.data) {
+      const viewerCount = data.data.data.value || 0;
+      console.log('✅ Viewer count:', viewerCount);
+      return res.json({
+        streamId,
+        currentViewers: viewerCount,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    
+    console.log('⚠️ No viewer data available');
+    res.json({
+      streamId,
+      currentViewers: 0,
+      timestamp: new Date().toISOString(),
+      note: 'No viewer data available - stream may be offline or has no viewers',
+    });
+  } catch (error) {
+    console.error('❌ Error getting viewer count:', error);
+    res.status(500).json({ 
+      error: error.message,
+      streamId: req.params.streamId,
+      currentViewers: 0,
+    });
+  }
+});
+
 // Get current viewer count for a stream (real-time monitoring)
 app.get('/api/stream/:playbackId/viewers', async (req, res) => {
   try {
